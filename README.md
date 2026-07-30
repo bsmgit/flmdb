@@ -1,2 +1,2 @@
 # flmdb
-Personal Film Database Catalog Utility
+Film Database CLI
