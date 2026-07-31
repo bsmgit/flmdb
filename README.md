@@ -20,6 +20,8 @@
 - [Configuration](#configuration)
 - [Command Reference](#command-reference)
   - [`add`](#add)
+  - [`edit`](#edit)
+  - [`delete`](#delete)
   - [`list`](#list)
   - [`export`](#export)
   - [`import`](#import)
@@ -37,6 +39,8 @@
 ## Features
 
 - Catalog films by title, year, and media format (DVD, Blu-ray, 4K, VHS, digital — anything you type).
+- Correct mistakes in place with partial updates — change one field or several, leave the rest alone.
+- Remove records you no longer own.
 - Store the canonical IMDb ID (`tt0133093`) as a unique key per film.
 - Automatically pull director, genre, runtime, and plot from OMDb.
 - Full-text-ish search across titles.
@@ -137,10 +141,14 @@ flmdb api-key set abcd1234
 # 3. Pull down director, genre, runtime, and plot
 flmdb hydrate
 
-# 4. Look at what you have
+# 4. Look at what you have (the first column is the ID used by edit/delete)
 flmdb list --verbose
 
-# 5. Back it up
+# 5. Fix a detail, or drop a film you no longer own
+flmdb edit 1 --format "Blu-ray"
+flmdb delete 1
+
+# 6. Back it up
 flmdb export --file my-collection.csv
 ```
 
@@ -227,7 +235,101 @@ Output:
 ✅ Added: "Arrival" (2016) [Blu-ray] (IMDb ID: tt2543164)
 ```
 
-Supplying the IMDb ID at add time is optional but recommended — it's the only thing `hydrate` can use to look a film up later.
+Supplying the IMDb ID at add time is optional but recommended — it's the only thing `hydrate` can use to look a film up later. If you forget, you can attach one later with [`edit`](#edit).
+
+---
+
+### `edit`
+
+Update an existing film's details. Only the fields you pass are touched — everything else, including hydrated metadata, is left alone.
+
+```
+flmdb edit <ID> [--title <TITLE>] [--year <YEAR>] [--format <FORMAT>] [--imdb <IMDB_ID>]
+```
+
+| Argument / Flag | Short | Type | Required | Notes |
+|---|---|---|---|---|
+| `<ID>` | | integer | **yes** | Positional — the local database ID, not the IMDb ID. Find it with `flmdb list`. |
+| `--title` | `-t` | string | no | Replace the title. |
+| `--year` | `-y` | integer | no | Replace the release year. |
+| `--format` | `-f` | string | no | Replace the media format. |
+| `--imdb` | `-i` | string | no | Set or replace the IMDb ID. Must stay unique. |
+
+Note the ID is a bare positional argument — there's no `--id` flag:
+
+```bash
+# Fix a typo in the title
+flmdb edit 7 --title "Blade Runner 2049"
+
+# Upgrade the format after buying the 4K disc
+flmdb edit 7 -f "4K"
+
+# Attach an IMDb ID to a record added without one, then pull metadata
+flmdb edit 12 --imdb tt1856101
+flmdb hydrate --imdb tt1856101
+
+# Change several fields at once
+flmdb edit 3 -t "Arrival" -y 2016 -f "Blu-ray"
+```
+
+Output:
+
+```
+✅ Successfully updated movie ID 7.
+```
+
+If the ID doesn't exist:
+
+```
+❌ Error: No movie found with ID 99.
+```
+
+If you pass an ID but no field flags, nothing is written:
+
+```
+⚠️ No fields provided to update. Use flags like -t, -y, -f, or -i.
+```
+
+Both of those are informational — the command still exits `0`.
+
+The `UPDATE` statement is built dynamically from whichever flags you supplied, with each value bound as a parameter, so titles containing quotes or apostrophes are handled safely.
+
+`edit` never touches `director`, `genre`, `runtime`, or `plot`. Those are managed by [`hydrate`](#hydrate).
+
+---
+
+### `delete`
+
+Permanently remove a film from the catalog.
+
+```
+flmdb delete <ID>
+```
+
+| Argument | Type | Required | Notes |
+|---|---|---|---|
+| `<ID>` | integer | **yes** | Positional — the local database ID from `flmdb list`. |
+
+```bash
+flmdb list --search "blade"     # find the ID first
+flmdb delete 7
+```
+
+Output:
+
+```
+🗑️ Successfully deleted movie ID 7.
+```
+
+Or, if nothing matched:
+
+```
+❌ Error: No movie found with ID 99.
+```
+
+> **There is no confirmation prompt and no undo.** The row is deleted the moment you press enter. Run `flmdb export` first if you want a recoverable snapshot.
+
+Deleting one film has no effect on any other record. IDs are never renumbered or reused, so gaps in the ID sequence after a delete are expected and harmless.
 
 ---
 
@@ -452,10 +554,15 @@ Because the schema is created with `IF NOT EXISTS` and additive `ALTER TABLE` mi
 ## Behavior Notes & Gotchas
 
 - **The database is per-directory.** Running `flmdb list` from a different folder shows an empty (freshly created) catalog. See [Configuration](#configuration).
-- **IMDb IDs are unique.** Adding or importing a second film with an IMDb ID already in the catalog fails with a constraint error. On import, the whole transaction rolls back, so nothing partial gets written.
+- **IMDb IDs are unique.** Adding, editing, or importing a film so that its IMDb ID duplicates one already in the catalog fails with a constraint error. On import, the whole transaction rolls back, so nothing partial gets written.
+- **`edit` and `delete` use the local ID, not the IMDb ID.** That's the first column of `flmdb list`. Passing an IMDb ID where an integer is expected is rejected by the argument parser before anything runs.
+- **Deletion is immediate and unconfirmed.** There's no prompt, no soft-delete, and no trash. Export before bulk cleanup.
+- **`edit` can't clear a field back to empty.** Omitting a flag leaves the field untouched; passing an empty string (`-i ""`) stores an empty string rather than `NULL`. Since `imdb_id` is UNIQUE, a second film blanked that way will collide. To truly clear an IMDb ID, delete and re-add the record, or edit the database with a SQLite client.
+- **A missing ID isn't a failure.** `edit` and `delete` both report `❌ Error: No movie found with ID N.` and still exit `0`, so scripts should check the output text rather than the exit status.
+- **ID gaps are normal.** The `id` column is `AUTOINCREMENT`, so numbers are never recycled after a delete. Exported CSVs will show gaps.
 - **Re-importing an export will collide.** Every row already has an IMDb ID, so a re-import into the same database hits the unique constraint. Import into a fresh directory, or strip `imdb_id` first.
 - **Hydration overwrites.** For the fields it manages (`director`, `genre`, `runtime`, `plot`), hydration replaces whatever was there — including replacing a manually written value with a blank if OMDb has nothing. `title` and `year` are only overwritten when OMDb returns a value.
-- **Only films with an IMDb ID can be hydrated.** Records without one are silently skipped by the bulk run. Use `flmdb add` again or edit the database directly to attach an ID.
+- **Only films with an IMDb ID can be hydrated.** Records without one are silently skipped by the bulk run. Attach one with `flmdb edit <ID> --imdb ttXXXXXXX`, then re-run `hydrate`.
 - **Search is title-only.** `--search` does not look at director, genre, or plot.
 - **Verbose columns can wrap.** Titles longer than 30 characters (35 in the compact view) push the row wider than the header rules. Use a wide terminal, or export to CSV for long titles.
 - **Hydration uses plain HTTP.** Requests go to `http://www.omdbapi.com/`, so the API key travels unencrypted. Avoid running `hydrate` on untrusted networks.
@@ -472,7 +579,19 @@ Install a C compiler — see the [build requirements](#build-time). The bundled 
 On Linux, install `libssl-dev` (Debian/Ubuntu) or `openssl-devel` (Fedora/RHEL) plus `pkg-config`.
 
 **`UNIQUE constraint failed: movies.imdb_id`**
-That IMDb ID is already in the catalog. Check with `flmdb list --search "<title>"`.
+That IMDb ID is already in the catalog — from `add`, `import`, or an `edit`. Check with `flmdb list --search "<title>"`, or list everything and scan the IMDb column.
+
+**`❌ Error: No movie found with ID N.`**
+`edit` and `delete` take the local database ID, not the IMDb ID. Run `flmdb list` and use the number in the first column. The record may also have been deleted already.
+
+**`⚠️ No fields provided to update.`**
+`flmdb edit 7` on its own doesn't know what to change. Add at least one of `-t`, `-y`, `-f`, or `-i`.
+
+**`error: invalid value 'tt0133093' for '<ID>': invalid digit found in string`**
+You passed an IMDb ID to `edit` or `delete`. Those commands want the integer local ID.
+
+**Deleted the wrong film**
+There's no undo. Restore from your most recent `flmdb export` CSV, or re-add the record manually — note that the new record gets a fresh ID.
 
 **`❌ Error: No OMDb API key found.`**
 Run `flmdb api-key set YOUR_KEY`, or export `OMDB_API_KEY` in your shell.
