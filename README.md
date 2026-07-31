@@ -78,7 +78,8 @@ sudo dnf install gcc pkgconf-pkg-config openssl-devel
 xcode-select --install
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
-cargo build --release
+#cd into you flmdb directory and build
+cargo install --path .
 
 # Windows
 # Install the "Desktop development with C++" workload from Visual Studio Build Tools,
