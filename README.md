@@ -80,8 +80,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 cargo build --release
 
-xcode-select --install
-
 # Windows
 # Install the "Desktop development with C++" workload from Visual Studio Build Tools,
 # then use the default x86_64-pc-windows-msvc Rust toolchain.
