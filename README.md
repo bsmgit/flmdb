@@ -93,7 +93,7 @@ An **OMDb API key** — free tier available at <https://www.omdbapi.com/apikey.a
 ### From source
 
 ```bash
-git clone <your-repository-url> flmdb
+git clone https://github.com/bsmgit/flmdb.git
 cd flmdb
 cargo build --release
 ```
