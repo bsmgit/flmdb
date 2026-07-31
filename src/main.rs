@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, Result, ToSql};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::thread::sleep;
@@ -67,6 +67,34 @@ enum Commands {
         /// Unique IMDb Identifier (e.g., tt0133093)
         #[arg(short, long)]
         imdb: Option<String>,
+    },
+
+    /// Edit an existing film's details by its local ID
+    Edit {
+        /// The local ID of the movie to edit (find this using 'flmdb list')
+        id: i32,
+
+        /// Update Movie Title
+        #[arg(short, long)]
+        title: Option<String>,
+
+        /// Update Release Year
+        #[arg(short, long)]
+        year: Option<i32>,
+
+        /// Update Physical or Digital Format
+        #[arg(short, long)]
+        format: Option<String>,
+
+        /// Update Unique IMDb Identifier (e.g., tt0133093)
+        #[arg(short, long)]
+        imdb: Option<String>,
+    },
+
+    /// Delete a film from the catalog by its local ID
+    Delete {
+        /// The local ID of the movie to delete (find this using 'flmdb list')
+        id: i32,
     },
 
     /// List films in the catalog with primary identifiers
@@ -169,6 +197,60 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 "✅ Added: \"{}\" ({}) [{}] (IMDb ID: {})",
                 title, year, format, imdb_str
             );
+        }
+
+        Commands::Edit { id, title, year, format, imdb } => {
+            let mut updates = Vec::new();
+            let mut params_vec: Vec<Box<dyn ToSql>> = Vec::new();
+            let mut param_index = 1;
+
+            if let Some(t) = title {
+                updates.push(format!("title = ?{}", param_index));
+                params_vec.push(Box::new(t));
+                param_index += 1;
+            }
+            if let Some(y) = year {
+                updates.push(format!("year = ?{}", param_index));
+                params_vec.push(Box::new(y));
+                param_index += 1;
+            }
+            if let Some(f) = format {
+                updates.push(format!("format = ?{}", param_index));
+                params_vec.push(Box::new(f));
+                param_index += 1;
+            }
+            if let Some(i) = imdb {
+                updates.push(format!("imdb_id = ?{}", param_index));
+                params_vec.push(Box::new(i));
+                param_index += 1;
+            }
+
+            if updates.is_empty() {
+                println!("⚠️ No fields provided to update. Use flags like -t, -y, -f, or -i.");
+                return Ok(());
+            }
+
+            let query = format!("UPDATE movies SET {} WHERE id = ?{}", updates.join(", "), param_index);
+            params_vec.push(Box::new(id));
+
+            let param_refs: Vec<&dyn ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            
+            let rows_updated = conn.execute(&query, param_refs.as_slice())?;
+            
+            if rows_updated > 0 {
+                println!("✅ Successfully updated movie ID {}.", id);
+            } else {
+                println!("❌ Error: No movie found with ID {}.", id);
+            }
+        }
+
+        Commands::Delete { id } => {
+            let rows_deleted = conn.execute("DELETE FROM movies WHERE id = ?1", params![id])?;
+            if rows_deleted > 0 {
+                println!("🗑️ Successfully deleted movie ID {}.", id);
+            } else {
+                println!("❌ Error: No movie found with ID {}.", id);
+            }
         }
 
         Commands::List { search, verbose } => {
@@ -313,7 +395,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Hydrate { imdb } => {
-            // First check the database for the API key, then fallback to environment variables
             let api_key = match conn.query_row(
                 "SELECT value FROM config WHERE key = 'omdb_api_key'",
                 [],
@@ -429,7 +510,6 @@ fn init_db() -> Result<Connection> {
 
     conn.pragma_update(None, "journal_mode", "WAL")?;
 
-    // Create a generic config table to hold application settings (like the API key)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
