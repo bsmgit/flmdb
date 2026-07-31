@@ -75,6 +75,10 @@ sudo apt install build-essential pkg-config libssl-dev
 sudo dnf install gcc pkgconf-pkg-config openssl-devel
 
 # macOS (Xcode Command Line Tools provide clang; TLS uses Secure Transport)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+cargo build --release
+
 xcode-select --install
 
 # Windows
